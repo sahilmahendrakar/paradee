@@ -1,0 +1,9 @@
+__pycache__/
+*.egg-info/
+.venv/
+training/.venv/
+training/data/teacher/
+training/checkpoints/
+training/models/
+training/out/
+*.wav

@@ -1,0 +1,20 @@
+[project]
+name = "paradee-training"
+version = "0.1.0"
+description = "Training and evaluation code for Paradee"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.0.1",
+    "huggingface-hub>=1.31.0",
+    "jiwer>=4.0.0",
+    "kokoro>=0.9.4",
+    "matplotlib>=3.11.2",
+    "onnx>=1.22.0",
+    "onnxruntime>=1.30.0",
+    "openai-whisper>=20250625",
+    "scipy>=1.18.1",
+    "soundfile>=0.14.0",
+    "torch>=2.14.0",
+    "torchaudio>=2.11.0",
+]
