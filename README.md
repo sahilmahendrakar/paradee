@@ -10,6 +10,8 @@ Paradee is a small English text-to-speech model. It has 8.07M parameters and is 
 Paradee also runs inside the browser. It is the light voice in the
 [Chickadee](https://github.com/sahilmahendrakar/chickadee) Chrome extension, where it needs no WebGPU and no download.
 
+**Paper:** [Paradee: Distilling Kokoro-82M into an 8M-Parameter Single-Voice Text-to-Speech Model](paper/Paradee-Mahendrakar-2026.pdf) (PDF, arXiv version coming soon)
+
 **Model files and audio samples:** [huggingface.co/sahilmahendrakar/Paradee-8M-v1.0](https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.0)
 
 ## Quick start
