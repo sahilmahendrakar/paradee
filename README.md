@@ -37,6 +37,14 @@ audio = tts("Paradee is a small voice that runs anywhere.", voice="bm_fable")   
 sf.write("hello.wav", audio, SAMPLE_RATE)
 ```
 
+`with_timestamps` also says when each word is spoken, for captions or for highlighting the word
+being read. The times come from the durations the audio was made from:
+
+```python
+audio, words = tts.with_timestamps("Paradee is a small voice that runs anywhere.")
+# words: [("Paradee", 0.25, 0.84), ("is", 0.84, 0.96), ("a", 0.96, 1.06), ...]: (text, start, end) in seconds
+```
+
 Text is turned into phonemes with [misaki](https://github.com/hexgrad/misaki), Kokoro's own
 grapheme-to-phoneme library, which is what the training data used. The first run also downloads
 misaki's English dictionary data. The British voices use misaki's British dictionary, as Kokoro
@@ -140,6 +148,10 @@ The model is one ONNX graph that goes from token ids to audio:
   input is `speed`, float32 `[1]`, where 1.0 is normal speed. In 1.2 the third input is `voice`,
   int64 `[1]`, the voice's position in the `voices` list in `config.json` (0 is `af_heart`).
 - **Output:** `waveform`, float32 `[1, samples]` at 24 kHz.
+- **Durations:** the graph also computes each token's length in frames of 600 samples, rounded,
+  as the tensor `/Clip_output_0`, float32 `[1, T]`, pads included. The frames add up to the
+  waveform's length exactly. It is not a graph output in the released files; `paradee/tts.py`
+  adds it as one when it loads the file, and `with_timestamps` turns it into word times.
 
 [`web/misaki.js`](web/misaki.js) is for the browser. Browser phonemizers such as
 [kokoro-js](https://github.com/hexgrad/kokoro/tree/main/kokoro.js) use eSpeak NG, which writes
