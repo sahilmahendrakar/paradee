@@ -15,7 +15,7 @@ PRESETS = {  # name: (albert hidden, albert layers, albert heads, hidden_dim, st
 }
 
 class TextStudent(nn.Module):
-    def __init__(self, preset="s", n_token=178, teacher_dim=512, max_dur=50):
+    def __init__(self, preset="s", n_token=178, teacher_dim=512, max_dur=50, n_voices=1):
         super().__init__()
         mlp = preset.endswith("+mlp"); preset = preset.replace("+mlp", "")
         ah, al, an, hd, sd, nl = PRESETS[preset]
@@ -27,14 +27,14 @@ class TextStudent(nn.Module):
         self.text_encoder = TextEncoder(channels=hd, kernel_size=5, depth=nl, n_symbols=n_token)
         self.asr_proj = (nn.Sequential(nn.Linear(hd, teacher_dim), nn.GELU(), nn.Linear(teacher_dim, teacher_dim)) if mlp
                          else nn.Linear(hd, teacher_dim))
-        self.style = nn.Parameter(torch.randn(1, sd) * 0.1)  # the one voice
+        self.style = nn.Parameter(torch.randn(n_voices, sd) * 0.1)  # one learned vector per voice (row 0 = af_heart)
 
-    def forward(self, ids, lengths, aln=None):
-        """ids [B,T] long, lengths [B]. aln: optional teacher alignment [B,T,F] (teacher forcing).
+    def forward(self, ids, lengths, aln=None, voice=None):
+        """ids [B,T] long, lengths [B]. aln: optional teacher alignment [B,T,F] (teacher forcing). voice: [B] long (default voice 0).
         Returns dur [B,T] (pre-round sigmoid sums), F0 [B,2F], N [B,2F], asr_tok [B,512,T]."""
         B, T = ids.shape
         mask = torch.arange(T, device=ids.device)[None].expand(B, -1) >= lengths[:, None]
-        s = self.style.expand(B, -1)
+        s = self.style[voice] if voice is not None else self.style[:1].expand(B, -1)
         bert = self.bert(ids, attention_mask=(~mask).int())
         d_en = self.bert_encoder(bert).transpose(-1, -2)
         d = self.predictor.text_encoder(d_en, s, lengths, mask)
@@ -47,6 +47,12 @@ class TextStudent(nn.Module):
         en = d.transpose(-1, -2) @ aln
         F0, N = self.predictor.F0Ntrain(en, s)
         return dur, F0, N, asr_tok
+
+def load_voices(model, state):
+    """Load a checkpoint into a model whose style table may have more rows: extra voices start from voice 0's vector."""
+    st = dict(state); w = st["style"]
+    if w.shape[0] < model.style.shape[0]: st["style"] = torch.cat([w, w[:1].repeat(model.style.shape[0] - w.shape[0], 1)])
+    return model.load_state_dict(st)
 
 def alignment(pred_dur, F=None):
     """pred_dur [T] long -> [T, F] one-hot expansion matrix."""

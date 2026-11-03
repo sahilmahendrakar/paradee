@@ -128,6 +128,8 @@ between 2 and 8 kHz (phase is the timing of each frequency's wave), to remove a 
 1.1 the new head does not have that problem and the filter is gone.
 
 The code for every step is in [`training/`](training/). It runs on one laptop.
+To rebuild the 1.2 ONNX files from the released PyTorch weights, see
+[step 6 in the training README](training/README.md#6-exporting-12-from-the-released-weights).
 
 ## Using the ONNX file directly
 

@@ -114,12 +114,12 @@ class SourceFilterHead2(SourceFilterHead):
 
 class VDecoder(nn.Module):
     """Decoder A's AdaIN trunk + the frame-rate head."""
-    def __init__(self, preset="A", head="v1", **kw):
+    def __init__(self, preset="A", head="v1", n_voices=1, **kw):
         super().__init__(); t = StudentDecoder(preset); uic = t.generator.conv_post.in_channels * 4
         for k in ("encode", "decode", "F0_conv", "N_conv", "asr_res"): setattr(self, k, getattr(t, k))
-        self.style = t.style; self.head = (SourceFilterHead2 if head == "v2" else SourceFilterHead)(in_ch=uic, **kw)
-    def forward(self, asr, F0_curve, N, noise=None, c0=None):
-        s = self.style.expand(asr.shape[0], -1)
+        self.style = nn.Parameter(t.style.data.repeat(n_voices, 1)); self.head = (SourceFilterHead2 if head == "v2" else SourceFilterHead)(in_ch=uic, **kw)
+    def forward(self, asr, F0_curve, N, noise=None, c0=None, voice=None):
+        s = self.style[voice] if voice is not None else self.style[:1].expand(asr.shape[0], -1)
         F0 = self.F0_conv(F0_curve.unsqueeze(1)); Nn = self.N_conv(N.unsqueeze(1))
         x = self.encode(torch.cat([asr, F0, Nn], 1), s); asr_res = self.asr_res(asr); res = True
         for block in self.decode:
@@ -132,7 +132,9 @@ class VDecoder(nn.Module):
         res = self.load_state_dict(sd, strict=False); assert all(k.startswith("head.") for k in res.missing_keys) and not res.unexpected_keys, res
     def load_ckpt(self, path, device="cpu"):
         """Load a vhead checkpoint; one from before the pulsing-noise sources gets them zero-initialised (same function)."""
-        res = self.load_state_dict(torch.load(path, map_location=device)["model"], strict=False); assert all("out_mod" in k or "out_b" in k for k in res.missing_keys) and not res.unexpected_keys, res
+        st = torch.load(path, map_location=device)["model"]; w = st["style"]
+        if w.shape[0] < self.style.shape[0]: st["style"] = torch.cat([w, w[:1].repeat(self.style.shape[0] - w.shape[0], 1)])   # new voices start from voice 0
+        res = self.load_state_dict(st, strict=False); assert all("out_mod" in k or "out_b" in k for k in res.missing_keys) and not res.unexpected_keys, res
         if any("out_b" in k for k in res.missing_keys): self.head.burst = False   # checkpoint from before the short-window noise path
 
 def HV(path):

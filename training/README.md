@@ -1,9 +1,9 @@
 # Training Paradee
 
 This folder has the code that produced Paradee v1.0 and v1.1. Steps 1 to 4 are v1.0, and step 5
-adds the v1.1 head on top of them. Every run fits on one laptop: the original ran
-on a MacBook Pro with an Apple M4 Pro and 24 GB of memory, using PyTorch's MPS backend. Run every
-command from this folder. The environment is managed with [uv](https://docs.astral.sh/uv/):
+adds the v1.1 head on top of them. Step 6 exports 1.2 from its released weights. Every run fits
+on one laptop: the original ran on a MacBook Pro with an Apple M4 Pro and 24 GB of memory, using
+PyTorch's MPS backend. Run every command from this folder. The environment is managed with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 cd training
@@ -95,6 +95,25 @@ from scratch with the commands above has not been tested end to end.
 uv run python scripts/vh_ab.py checkpoints/vh2_fullgan/last.pt 200 --wer   # v1.0 against the new head, PyTorch
 uv run python scripts/onnx_eval.py 200 v1.1=models/paradee_v1.1/paradee_int8.onnx   # a released-style ONNX file
 ```
+
+## 6. Exporting 1.2 from the released weights
+
+`scripts/export_paradee_v1_2.py` writes the 1.2 ONNX graph (four voices, a third input `voice`)
+in fp32 and int8 from the PyTorch weights on the Hub. It needs no teacher data or training.
+
+```bash
+uv run hf download sahilmahendrakar/Paradee-8M-v1.2 config.json pytorch/text_side.pt pytorch/decoder.pt --revision v1.2 --local-dir hf
+uv run python scripts/export_paradee_v1_2.py hf/pytorch/decoder.pt --text hf/pytorch/text_side.pt --config hf/config.json
+```
+
+It first checks that the export graph matches the training code for every voice, then writes
+`models/paradee_v1.2/paradee.onnx` and `paradee_int8.onnx` and prints the speed of each on one CPU
+thread. It takes about a minute on a CPU. The released files were exported with torch 2.14.1, and
+with that version both come out byte for byte the same as the ones on the Hub (int8 sha256
+`a6989796...6c97da1`). With the locked torch 2.14.0 the weights and ops are the same and only the
+file header differs. To match exactly, run `uv pip install torch==2.14.1` first and add
+`--no-sync` to `uv run`. The four-voice style tables live in `student.py` and `vhead.py`
+(`n_voices`), and checkpoints with one voice still load as before.
 
 ## Evaluation
 

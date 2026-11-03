@@ -7,3 +7,4 @@ training/checkpoints/
 training/models/
 training/out/
 *.wav
+training/hf/
