@@ -1,12 +1,21 @@
-"""Text -> phonemes (misaki, Kokoro's own G2P) -> token ids -> one ONNX graph -> 24 kHz audio."""
-import json, re
+"""Text -> phonemes (Kokoro's own G2P: misaki for English, eSpeak through misaki for the other languages) ->
+token ids -> one ONNX graph -> 24 kHz audio."""
+import json, re, unicodedata
+from dataclasses import dataclass
 import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-REPOS = {"1.2": "sahilmahendrakar/Paradee-8M-v1.2", "1.1": "sahilmahendrakar/Paradee-8M-v1.1", "1.0": "sahilmahendrakar/Paradee-8M-v1.0"}
-# the voices of each version, in the order the 1.2 model numbers them. 1.0 and 1.1 have af_heart only.
-VOICES = {"1.2": ["af_heart", "bf_isabella", "am_puck", "bm_fable"], "1.1": ["af_heart"], "1.0": ["af_heart"]}
+REPOS = {"1.3": "sahilmahendrakar/Paradee-8M-v1.3", "1.2": "sahilmahendrakar/Paradee-8M-v1.2", "1.1": "sahilmahendrakar/Paradee-8M-v1.1", "1.0": "sahilmahendrakar/Paradee-8M-v1.0"}
+# the voices of each version, in the order the model numbers them. 1.3 keeps 1.2's four voices at the same numbers
+# and adds two Hindi voices, a French one and a Spanish one. 1.0 and 1.1 have af_heart only.
+VOICES = {
+    "1.3": ["af_heart", "bf_isabella", "am_puck", "bm_fable", "hf_alpha", "hm_omega", "ff_siwis", "em_alex"],
+    "1.2": ["af_heart", "bf_isabella", "am_puck", "bm_fable"], "1.1": ["af_heart"], "1.0": ["af_heart"],
+}
+# A voice's first letter is its language, as in Kokoro: a = American English, b = British English, h = Hindi,
+# f = French, e = Spanish. The values are the eSpeak languages Kokoro uses for the languages misaki doesn't cover.
+LANGUAGES = {"a": "en-us", "b": "en-gb", "h": "hi", "f": "fr-fr", "e": "es"}
 SAMPLE_RATE = 24000
 MAX_PHONEMES = 510   # the text side has 512 positions, two of which are the pad tokens at each end
 # Inside every released graph (1.0, 1.1, 1.2): each token's length in frames of 600 samples, rounded. The frames
@@ -68,6 +77,53 @@ def _phonemes(tokens):
     return "".join(t.phonemes + (" " if t.whitespace else "") for t in tokens).strip()
 
 
+@dataclass
+class _Word:
+    """The parts of a misaki token that _phonemes, _token_chunks and _word_times read."""
+    text: str
+    phonemes: str
+    whitespace: bool = True
+
+
+def _espeak_tokens(text, phonemes):
+    """eSpeak gives one phoneme string for a whole sentence, with a space between words. Split it back into
+    words so the timestamps can use it like misaki's tokens. The words are paired with the words of the text in
+    order. When the counts differ (a few percent of sentences: a number read as several words, an abbreviation
+    spelled out) the words get no text, and with_timestamps spreads the text's words over the sentence instead."""
+    parts = phonemes.split(" ")
+    spoken = [i for i, p in enumerate(parts) if any(c.isalpha() for c in p)]
+    words = _text_words(text)
+    tokens = [_Word("", p) for p in parts]
+    if len(spoken) == len(words):
+        for i, w in zip(spoken, words):
+            tokens[i].text = w
+    if tokens:
+        tokens[-1].whitespace = False
+    return tokens, len(spoken) == len(words)
+
+
+def _text_words(text):
+    """The words of `text`, without the punctuation around them ("¿Dónde" -> "Dónde", "heures," -> "heures")."""
+    def bare(w):
+        while w and unicodedata.category(w[0])[0] == "P":
+            w = w[1:]
+        while w and unicodedata.category(w[-1])[0] == "P":
+            w = w[:-1]
+        return w
+    return [b for b in map(bare, text.split()) if any(c.isalnum() for c in b)]
+
+
+def _spread(words, start, end):
+    """The text's words over [start, end], each getting time in proportion to its length in characters."""
+    total = sum(len(w) for w in words)
+    out, t = [], start
+    for w in words:
+        d = (end - start) * len(w) / total
+        out.append((w, t, t + d))
+        t += d
+    return out
+
+
 def _token_chunks(tokens):
     """misaki's tokens in runs whose phonemes fit the model, cut between words, as _chunks cuts text."""
     chunk = []
@@ -116,13 +172,14 @@ def _word_times(tokens, durations):
 class Paradee:
     """Load once, then call with text to get a float32 waveform at 24 kHz.
 
-    version: "1.2" (default, four voices), "1.1" or "1.0" (af_heart only; 1.0 has the slower decoder).
+    version: "1.3" (default, eight voices in English, Hindi, French and Spanish), "1.2" (the four English
+    voices), "1.1" or "1.0" (af_heart only; 1.0 has the slower decoder).
     quantized: use the 8.5 MB int8 file (default) instead of the 35 MB fp32 one. They sound the same.
     model_path / config_path: local files instead of downloading from the Hugging Face Hub.
     threads: CPU threads for onnxruntime. One thread already runs about 60x faster than real time.
     """
 
-    def __init__(self, version="1.2", quantized=True, model_path=None, config_path=None, threads=1):
+    def __init__(self, version="1.3", quantized=True, model_path=None, config_path=None, threads=1):
         if version not in REPOS:
             raise ValueError(f"unknown version {version!r}; choose one of {', '.join(REPOS)}")
         repo, revision = REPOS[version], f"v{version}"
@@ -139,17 +196,26 @@ class Paradee:
         self.session = ort.InferenceSession(model, so, providers=["CPUExecutionProvider"])
         self._g2p = {}
 
-    def g2p(self, british=False):
-        """The same G2P setup as kokoro.KPipeline, which made the training data: lang_code "a" (American) for
-        the af_/am_ voices, "b" (British) for the bf_/bm_ ones. Each is loaded the first time it is needed."""
-        if british not in self._g2p:
+    def g2p(self, voice="af_heart"):
+        """The same G2P setup as kokoro.KPipeline, which made the training data, for the voice's language (its
+        first letter): misaki's American or British English for a and b, eSpeak through misaki for h (Hindi),
+        f (French) and e (Spanish). Each is loaded the first time it is needed."""
+        lang = voice[0]
+        if lang not in LANGUAGES:
+            raise ValueError(f"no language for voice {voice!r}")
+        if lang not in self._g2p:
             from misaki import en, espeak
-            self._g2p[british] = en.G2P(trf=False, british=british, fallback=espeak.EspeakFallback(british=british), unk="")
-        return self._g2p[british]
+            if lang in "ab":
+                british = lang == "b"
+                self._g2p[lang] = en.G2P(trf=False, british=british, fallback=espeak.EspeakFallback(british=british), unk="")
+            else:
+                self._g2p[lang] = espeak.EspeakG2P(language=LANGUAGES[lang])
+        return self._g2p[lang]
 
     def phonemize(self, text, voice="af_heart"):
-        """British phonemes for the British voices (bf_isabella, bm_fable), American for the rest."""
-        phonemes, _ = self.g2p(british=voice.startswith("b"))(text)
+        """Phonemes in the voice's language: British for bf_isabella and bm_fable, American for af_heart and
+        am_puck, Hindi for hf_alpha and hm_omega, French for ff_siwis, Spanish for em_alex."""
+        phonemes, _ = self.g2p(voice)(text)
         return phonemes
 
     def check_voice(self, voice):
@@ -180,20 +246,30 @@ class Paradee:
         word being read. Returns (audio, words): each word is (text, start, end) in seconds of that audio, and
         punctuation is left out. The times come from the durations the model made the audio from."""
         self.check_voice(voice)
-        g2p = self.g2p(british=voice.startswith("b"))
+        g2p = self.g2p(voice)
         parts, words, offset = [], [], 0.0
         for sentence in self._sentences(text):
-            _, tokens = g2p(sentence)
+            phonemes, tokens = g2p(sentence)
+            paired = True
+            if tokens is None:   # eSpeak (Hindi, French, Spanish) gives no tokens
+                tokens, paired = _espeak_tokens(sentence, phonemes)
+            for t in tokens:   # the model never sees symbols outside its vocabulary (Spanish ¿ ¡), so don't count them
+                t.phonemes = "".join(c for c in (t.phonemes or "") if c in self.vocab)
+            start = offset
             for chunk in _token_chunks(tokens):
                 audio, durations = self._run(_phonemes(chunk), speed, voice)
-                words += [(w, offset + start, offset + end) for w, start, end in _word_times(chunk, durations)]
+                if paired:
+                    words += [(w, offset + s, offset + e) for w, s, e in _word_times(chunk, durations)]
                 offset += len(audio) / SAMPLE_RATE
                 parts.append(audio)
+            if not paired:
+                words += _spread(_text_words(sentence), start, offset)
         return (np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)), words
 
     @staticmethod
     def _sentences(text):
-        return (s for s in re.split(r"(?<=[.!?…])\s+|\n+", text.strip()) if s.strip())
+        # "।" (and "॥") end a sentence in Hindi, often with no space after them
+        return (s for s in re.split(r"(?<=[.!?…])\s+|(?<=[।॥])\s*|\n+", text.strip()) if s.strip())
 
     def _chunks(self, text, voice="af_heart"):
         for sentence in self._sentences(text):

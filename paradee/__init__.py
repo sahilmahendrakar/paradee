@@ -1,5 +1,6 @@
-"""Paradee: an 8M-parameter English text-to-speech model distilled from Kokoro-82M, with four of its voices."""
-from .tts import Paradee, SAMPLE_RATE, VOICES
+"""Paradee: an 8M-parameter text-to-speech model distilled from Kokoro-82M, with eight of its voices in English,
+Hindi, French and Spanish."""
+from .tts import Paradee, SAMPLE_RATE, VOICES, LANGUAGES
 
-__all__ = ["Paradee", "SAMPLE_RATE", "VOICES"]
-__version__ = "1.2.1"
+__all__ = ["Paradee", "SAMPLE_RATE", "VOICES", "LANGUAGES"]
+__version__ = "1.3.0"
