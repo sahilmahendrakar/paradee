@@ -3,4 +3,4 @@ Hindi, French and Spanish."""
 from .tts import Paradee, SAMPLE_RATE, VOICES, LANGUAGES
 
 __all__ = ["Paradee", "SAMPLE_RATE", "VOICES", "LANGUAGES"]
-__version__ = "1.3.0"
+__version__ = "1.3.1"

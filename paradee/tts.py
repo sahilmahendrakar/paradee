@@ -1,5 +1,5 @@
-"""Text -> phonemes (Kokoro's own G2P: misaki for English, eSpeak through misaki for the other languages) ->
-token ids -> one ONNX graph -> 24 kHz audio."""
+"""Text -> phonemes (misaki for English, Paradee's own G2P for Hindi, French and Spanish and for the English words
+misaki has no entry for) -> token ids -> one ONNX graph -> 24 kHz audio."""
 import json, re, unicodedata
 from dataclasses import dataclass
 import numpy as np
@@ -16,6 +16,7 @@ VOICES = {
 # A voice's first letter is its language, as in Kokoro: a = American English, b = British English, h = Hindi,
 # f = French, e = Spanish. The values are the eSpeak languages Kokoro uses for the languages misaki doesn't cover.
 LANGUAGES = {"a": "en-us", "b": "en-gb", "h": "hi", "f": "fr-fr", "e": "es"}
+G2PS = ("paradee", "espeak")
 SAMPLE_RATE = 24000
 MAX_PHONEMES = 510   # the text side has 512 positions, two of which are the pad tokens at each end
 # Inside every released graph (1.0, 1.1, 1.2): each token's length in frames of 600 samples, rounded. The frames
@@ -177,11 +178,17 @@ class Paradee:
     quantized: use the 8.5 MB int8 file (default) instead of the 35 MB fp32 one. They sound the same.
     model_path / config_path: local files instead of downloading from the Hugging Face Hub.
     threads: CPU threads for onnxruntime. One thread already runs about 60x faster than real time.
+    g2p: "paradee" (default) turns text into phonemes with Paradee's own small G2P model (paradee/g2p.py), which
+    gives eSpeak NG's phonemes without eSpeak. "espeak" uses eSpeak NG itself, as Kokoro does; it is GPL-3.0 and
+    needs `pip install paradee[espeak]`.
     """
 
-    def __init__(self, version="1.3", quantized=True, model_path=None, config_path=None, threads=1):
+    def __init__(self, version="1.3", quantized=True, model_path=None, config_path=None, threads=1, g2p="paradee"):
         if version not in REPOS:
             raise ValueError(f"unknown version {version!r}; choose one of {', '.join(REPOS)}")
+        if g2p not in G2PS:
+            raise ValueError(f"unknown g2p {g2p!r}; choose one of {', '.join(G2PS)}")
+        self.g2p_name = g2p
         repo, revision = REPOS[version], f"v{version}"
         self.version, self.voices = version, VOICES[version]
         name = "onnx/paradee_int8.onnx" if quantized else "onnx/paradee.onnx"
@@ -194,22 +201,40 @@ class Paradee:
         with open(model_path, "rb") as f:
             model = _with_output(f.read(), DURATIONS)
         self.session = ort.InferenceSession(model, so, providers=["CPUExecutionProvider"])
-        self._g2p = {}
+        self._g2p, self._own = {}, None
 
     def g2p(self, voice="af_heart"):
-        """The same G2P setup as kokoro.KPipeline, which made the training data, for the voice's language (its
-        first letter): misaki's American or British English for a and b, eSpeak through misaki for h (Hindi),
-        f (French) and e (Spanish). Each is loaded the first time it is needed."""
+        """The G2P for the voice's language (its first letter): misaki's American or British English for a and b,
+        and phonemes in eSpeak's style for h (Hindi), f (French) and e (Spanish). With g2p="espeak" this is the
+        same setup as kokoro.KPipeline, which made the training data; with g2p="paradee" Paradee's own model
+        stands in for eSpeak, both for the three languages and for the English words misaki has no entry for.
+        Each is loaded the first time it is needed. Like misaki's, it returns (phonemes, tokens), and tokens is
+        None for h, f and e."""
         lang = voice[0]
         if lang not in LANGUAGES:
             raise ValueError(f"no language for voice {voice!r}")
         if lang not in self._g2p:
-            from misaki import en, espeak
-            if lang in "ab":
-                british = lang == "b"
-                self._g2p[lang] = en.G2P(trf=False, british=british, fallback=espeak.EspeakFallback(british=british), unk="")
+            if self.g2p_name == "paradee":
+                from .g2p import G2P
+                self._own = self._own or G2P()
+                own = self._own
+                if lang in "ab":
+                    from misaki import en
+                    british = lang == "b"
+                    self._g2p[lang] = en.G2P(trf=False, british=british, fallback=own.english_fallback(british), unk="")
+                else:
+                    code = {"h": "hi", "f": "fr", "e": "es"}[lang]
+                    self._g2p[lang] = lambda text: (own(text, code), None)
             else:
-                self._g2p[lang] = espeak.EspeakG2P(language=LANGUAGES[lang])
+                try:
+                    from misaki import en, espeak
+                except ImportError as e:
+                    raise ImportError('g2p="espeak" needs eSpeak NG: pip install "paradee[espeak]"') from e
+                if lang in "ab":
+                    british = lang == "b"
+                    self._g2p[lang] = en.G2P(trf=False, british=british, fallback=espeak.EspeakFallback(british=british), unk="")
+                else:
+                    self._g2p[lang] = espeak.EspeakG2P(language=LANGUAGES[lang])
         return self._g2p[lang]
 
     def phonemize(self, text, voice="af_heart"):
