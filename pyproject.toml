@@ -1,6 +1,6 @@
 [project]
 name = "paradee"
-version = "1.3.0"
+version = "1.3.1"
 description = "An 8M-parameter text-to-speech model distilled from Kokoro-82M, in English, Hindi, French and Spanish"
 readme = "README.md"
 license = "Apache-2.0"
@@ -14,9 +14,11 @@ dependencies = [
     "misaki>=0.9.4",
     "spacy>=3.7",
     "num2words",
-    "phonemizer-fork",
-    "espeakng-loader",
 ]
+
+[project.optional-dependencies]
+# eSpeak NG (GPL-3.0), only for Paradee(g2p="espeak"). The default G2P doesn't need it.
+espeak = ["phonemizer-fork", "espeakng-loader"]
 
 [project.scripts]
 paradee = "paradee.__main__:main"

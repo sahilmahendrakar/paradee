@@ -12,9 +12,10 @@ def main():
     ap.add_argument("--voice", default="af_heart", help="English: af_heart, bf_isabella, am_puck, bm_fable. Hindi: hf_alpha, hm_omega. French: ff_siwis. Spanish: em_alex. (1.2: the English four; 1.0 and 1.1: af_heart only)")
     ap.add_argument("--fp32", action="store_true", help="use the fp32 model instead of int8")
     ap.add_argument("--model-version", default="1.3", choices=["1.3", "1.2", "1.1", "1.0"])
+    ap.add_argument("--g2p", default="paradee", choices=["paradee", "espeak"], help="phonemes from Paradee's own G2P (default) or from eSpeak NG (needs paradee[espeak])")
     a = ap.parse_args()
     text = a.text if a.text is not None else sys.stdin.read()
-    audio = Paradee(version=a.model_version, quantized=not a.fp32)(text, speed=a.speed, voice=a.voice)
+    audio = Paradee(version=a.model_version, quantized=not a.fp32, g2p=a.g2p)(text, speed=a.speed, voice=a.voice)
     pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2")
     with wave.open(a.out, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SAMPLE_RATE); w.writeframes(pcm.tobytes())

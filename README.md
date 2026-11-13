@@ -55,11 +55,11 @@ audio, words = tts.with_timestamps("Paradee is a small voice that runs anywhere.
 # words: [("Paradee", 0.25, 0.84), ("is", 0.84, 0.96), ("a", 0.96, 1.06), ...]: (text, start, end) in seconds
 ```
 
-The voice sets the language, and each sentence is spoken in one language. Text is turned into
-phonemes the way Kokoro does it, which is what the training data used: English with
-[misaki](https://github.com/hexgrad/misaki), Kokoro's own grapheme-to-phoneme library (its British
-dictionary for the British voices), and Hindi, French and Spanish with eSpeak NG through misaki.
-The first English run also downloads misaki's dictionary data. `Paradee(version="1.2")` loads the
+The voice sets the language, and each sentence is spoken in one language. English is turned into
+phonemes with [misaki](https://github.com/hexgrad/misaki), Kokoro's own grapheme-to-phoneme library
+(its British dictionary for the British voices). The first English run also downloads misaki's
+dictionary data. Hindi, French and Spanish, and the English words misaki has no entry for, go
+through Paradee's own small G2P model, described in [Phonemes without eSpeak](#phonemes-without-espeak). `Paradee(version="1.2")` loads the
 previous release with the four English voices, and `Paradee(version="1.1")` and
 `Paradee(version="1.0")` load the earlier ones, which have `af_heart` only.
 
@@ -201,6 +201,30 @@ conversion Whisper mishears about 31% of words, and with it about 2%. It is for 
 only. For Hindi, French and Spanish the model learned eSpeak's own output, with the few symbol
 renames in misaki's `EspeakG2P`.
 
+## Phonemes without eSpeak
+
+Kokoro, and the data Paradee was trained on, get the phonemes for Hindi, French and Spanish from
+[eSpeak NG](https://github.com/espeak-ng/espeak-ng), and misaki also hands it the English words it
+has no entry for, mostly names. eSpeak NG is GPL-3.0, so an app that bundles it has to be GPL too.
+Since 1.3.1 the package doesn't use it. [`paradee/g2p.py`](paradee/g2p.py) gives the same
+phonemes from three small parts in `paradee/data/`, all Apache 2.0:
+
+- a 0.76M-parameter model (0.9 MB int8 ONNX) that reads one word, plus the last letter of the word
+  before it and the first letter of the word after it, and writes the word's phonemes. The
+  neighbouring letters are enough for French liaison ("les amis"), the Spanish b, d and g that
+  soften after a vowel, and the stress eSpeak puts at the end of a phrase.
+- word lists: the words the model gets wrong, and the 3,000 most common words of each language.
+- a table of number pieces per language, which numbers are put together from.
+
+The model and lists were learned from eSpeak's output on 400k Wikipedia sentences per language.
+On held-out sentences from other articles they differ from eSpeak in 0.80% (Hindi), 0.95% (French)
+and 0.59% (Spanish) of phoneme characters, mostly a moved stress mark. For the English words misaki
+sends on, they differ in 1.6% (American) and 1.7% (British). On 200 sentences per voice, Whisper's
+word error rate on Paradee is within 0.3 points of the eSpeak phonemes for every voice.
+
+`Paradee(g2p="espeak")` (or `--g2p espeak`) uses eSpeak NG as before. It needs
+`pip install "paradee[espeak]"`.
+
 ## License
 
 Apache 2.0, the same as Kokoro. The sentences in `training/data/` come from WikiText-103 and are
@@ -211,7 +235,8 @@ under CC BY-SA 3.0.
 Paradee is distilled from [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) by hexgrad,
 which builds on [StyleTTS 2](https://github.com/yl4579/StyleTTS2) and
 [iSTFTNet](https://arxiv.org/abs/2203.02395). Phonemes come from
-[misaki](https://github.com/hexgrad/misaki).
+[misaki](https://github.com/hexgrad/misaki), and Paradee's own G2P was learned from
+[eSpeak NG](https://github.com/espeak-ng/espeak-ng)'s output.
 
 ## Citation
 
